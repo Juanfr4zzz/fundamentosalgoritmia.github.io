@@ -77,22 +77,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const reader = new FileReader();
 
             reader.onload = (e) => {
-                const data = e.target.result;
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const sheetName = workbook.SheetNames[0];
-                const sheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                try {
+                    const data = e.target.result;
+                    const workbook = XLSX.read(data, { type: 'binary' });
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    let alumnos = XLSX.utils.sheet_to_json(sheet);
 
-                // Convertir a formato CSV (simplemente uniendo las filas con comas)
-                const csvData = jsonData.map(row => row.join(';')).join('\n');
-
-                // Parsea el CSV
-                const alumnos = parseCSV(csvData);
-
-                if (alumnos && alumnos.length > 0) {
+                    // Adaptar los nombres de las propiedades
+                    alumnos = alumnos.map(alumno => ({
+                        apellidosNombres: alumno['ApellidosNombres'],
+                        genero: alumno['Genero']
+                    }));
                     resolve(alumnos);
-                } else {
-                    reject('No se pudieron extraer los datos de alumnos del archivo.');
+                } catch (error) {
+                    console.error("Error al procesar el archivo:", error);
+                    reject(error);
                 }
             };
 
@@ -102,57 +102,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             reader.readAsBinaryString(file);
         });
-    }
-
-
-    function parseCSV(csvText) {
-        const lineas = csvText.split('\n');
-        const alumnos = [];
-
-        // Asume que la primera línea son los encabezados
-        let encabezados = lineas[0].split(';');
-
-        // Eliminar el BOM si está presente
-        if (encabezados[0].charCodeAt(0) === 65279) {
-            encabezados[0] = encabezados[0].substring(1);
-        }
-
-        // Encuentra los índices de las columnas necesarias (ignorando mayúsculas/minúsculas y espacios)
-        const idxApellidosNombres = findColumnIndex(encabezados, 'ApellidosNombres');
-        const idxGenero = findColumnIndex(encabezados, 'Genero');
-
-        if (idxApellidosNombres === -1 || idxGenero === -1) {
-            console.error("No se encontraron las columnas 'ApellidosNombres' o 'Genero'.");
-            return [];
-        }
-
-        for (let i = 1; i < lineas.length; i++) {  // i = 1 para saltar la línea de encabezado
-            const valores = lineas[i].split(';');
-            // Verifica que la línea tenga suficientes columnas antes de acceder a ellas
-            if (valores.length > Math.max(idxApellidosNombres, idxGenero)) {
-                const apellidosNombres = valores[idxApellidosNombres].trim();
-                const genero = valores[idxGenero].trim().toUpperCase(); // Convertir a mayúsculas para comparación
-
-                // Valida que los datos no estén vacíos
-                if (apellidosNombres && genero) {
-                    alumnos.push({
-                        apellidosNombres: apellidosNombres,
-                        genero: genero
-                    });
-                }
-            }
-        }
-        return alumnos;
-    }
-
-    function findColumnIndex(headerRow, columnName) {
-        const normalizedColumnName = columnName.trim().toLowerCase();
-        for (let i = 0; i < headerRow.length; i++) {
-            if (headerRow[i].trim().toLowerCase() === normalizedColumnName) {
-                return i;
-            }
-        }
-        return -1; // Retorna -1 si no se encuentra la columna
     }
 
 
@@ -178,13 +127,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const mujeres = alumnos.filter(alumno => alumno.genero === 'F');
-        const hombres = alumnos.filter(alumno => alumno.genero === 'M');
-
-        if (mujeres.length < numGrupos * numMujeresPorGrupo || hombres.length < numGrupos * numHombresPorGrupo) {
-            alert('No hay suficientes mujeres u hombres para formar los grupos con la configuración especificada.');
-            return;
-        }
+        let mujeres = alumnos.filter(alumno => alumno.genero.toUpperCase() === 'F');
+        let hombres = alumnos.filter(alumno => alumno.genero.toUpperCase() === 'M');
 
         const grupos = [];
         const alumnosAsignados = new Set(); // Para evitar nombres repetidos
@@ -196,58 +140,36 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             // Agregar mujeres al grupo
-            for (let j = 0; j < numMujeresPorGrupo; j++) {
-                let mujerAsignada = null;
-                let intentos = 0;
+            let mujeresAgregadas = 0;
+            while (mujeresAgregadas < numMujeresPorGrupo && mujeres.length > 0) {
+                const indiceMujer = Math.floor(Math.random() * mujeres.length);
+                const posibleMujer = mujeres[indiceMujer];
 
-                // Intenta encontrar una mujer no asignada, con un límite de intentos
-                while (intentos < mujeres.length) {
-                    const indiceMujer = Math.floor(Math.random() * mujeres.length);
-                    const posibleMujer = mujeres[indiceMujer];
-
-                    if (!alumnosAsignados.has(posibleMujer.apellidosNombres)) {
-                        mujerAsignada = posibleMujer;
-                        break;
-                    }
-                    intentos++;
-                }
-
-                if (mujerAsignada) {
-                    grupo.integrantes.push(mujerAsignada);
-                    alumnosAsignados.add(mujerAsignada.apellidosNombres);
+                if (!alumnosAsignados.has(posibleMujer.apellidosNombres)) {
+                    grupo.integrantes.push(posibleMujer);
+                    alumnosAsignados.add(posibleMujer.apellidosNombres);
+                    mujeres.splice(indiceMujer, 1); // Eliminar la mujer asignada de la lista
+                    mujeresAgregadas++;
                 } else {
-                    console.warn(`No se pudo asignar una mujer al grupo ${i + 1} después de varios intentos.`);
-                    // Aquí puedes implementar lógica adicional si no se puede cumplir con la cuota de género.
+                    mujeres.splice(indiceMujer, 1); // Eliminar la mujer repetida de la lista
                 }
             }
-
 
             // Agregar hombres al grupo
-            for (let j = 0; j < numHombresPorGrupo; j++) {
-                let hombreAsignado = null;
-                let intentos = 0;
+            let hombresAgregados = 0;
+            while (hombresAgregados < numHombresPorGrupo && hombres.length > 0) {
+                const indiceHombre = Math.floor(Math.random() * hombres.length);
+                const posibleHombre = hombres[indiceHombre];
 
-                // Intenta encontrar un hombre no asignado
-                while (intentos < hombres.length) {
-                    const indiceHombre = Math.floor(Math.random() * hombres.length);
-                    const posibleHombre = hombres[indiceHombre];
-
-                    if (!alumnosAsignados.has(posibleHombre.apellidosNombres)) {
-                        hombreAsignado = posibleHombre;
-                        break;
-                    }
-                    intentos++;
-                }
-
-                if (hombreAsignado) {
-                    grupo.integrantes.push(hombreAsignado);
-                    alumnosAsignados.add(hombreAsignado.apellidosNombres);
+                if (!alumnosAsignados.has(posibleHombre.apellidosNombres)) {
+                    grupo.integrantes.push(posibleHombre);
+                    alumnosAsignados.add(posibleHombre.apellidosNombres);
+                    hombres.splice(indiceHombre, 1); // Eliminar el hombre asignado de la lista
+                    hombresAgregados++;
                 } else {
-                    console.warn(`No se pudo asignar un hombre al grupo ${i + 1} después de varios intentos.`);
-                    // Aquí puedes implementar lógica adicional si no se puede cumplir con la cuota de género.
+                    hombres.splice(indiceHombre, 1); // Eliminar el hombre repetido de la lista
                 }
             }
-
 
             grupos.push(grupo);
         }
